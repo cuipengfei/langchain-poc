@@ -3,9 +3,11 @@ import http.client
 import logging
 import os
 
-from langchain_community.chat_models.tongyi import ChatTongyi
-from langchain_core.messages import HumanMessage
 from dotenv import load_dotenv
+from langchain_community.chat_models.tongyi import ChatTongyi
+from langchain_core.chat_history import BaseChatMessageHistory, InMemoryChatMessageHistory
+from langchain_core.messages import HumanMessage
+from langchain_core.runnables import RunnableWithMessageHistory
 
 
 def setup_logging():
@@ -50,16 +52,33 @@ if __name__ == "__main__":
 
     # 从.env文件加载API key
     load_dotenv()
-    
+
     # 使用os.getenv获取API key，并提供错误处理
     api_key = os.getenv("DASHSCOPE_API_KEY")
     if not api_key:
         raise ValueError("请在.env文件中设置 DASHSCOPE_API_KEY")
 
+    # 创建聊天模型
     chatLLM = ChatTongyi(
         model="qwen-max",
         streaming=False,
     )
+
+    # 添加聊天历史存储
+    store = {}
+
+
+    def get_session_history(session_id: str) -> BaseChatMessageHistory:
+        if session_id not in store:
+            store[session_id] = InMemoryChatMessageHistory()
+        return store[session_id]
+
+
+    # 将聊天模型与历史记录包装在一起
+    with_message_history = RunnableWithMessageHistory(chatLLM, get_session_history)
+
+    # 配置会话ID
+    config = {"configurable": {"session_id": "default_session"}}
 
     while True:
         try:
@@ -68,7 +87,11 @@ if __name__ == "__main__":
                 print("程序已退出。")
                 break
 
-            res = chatLLM.invoke([HumanMessage(content=user_input)], streaming=False)
+            # 使用带历史记录的方式调用模型
+            res = with_message_history.invoke(
+                [HumanMessage(content=user_input)],
+                config=config
+            )
             print("Qwen的回答：", res.content)
 
         except Exception as e:
