@@ -5,6 +5,7 @@ import os
 
 from langchain_community.chat_models.tongyi import ChatTongyi
 from langchain_core.messages import HumanMessage
+from dotenv import load_dotenv
 
 
 def setup_logging():
@@ -47,7 +48,13 @@ def get_multiline_input(prompt='请输入您的问题（或输入 "exit" 退出�
 if __name__ == "__main__":
     setup_logging()
 
-    os.environ["DASHSCOPE_API_KEY"] = "sk-5b4a77f4a34d4abe9cf8c1599551698c"
+    # 从.env文件加载API key
+    load_dotenv()
+    
+    # 使用os.getenv获取API key，并提供错误处理
+    api_key = os.getenv("DASHSCOPE_API_KEY")
+    if not api_key:
+        raise ValueError("请在.env文件中设置 DASHSCOPE_API_KEY")
 
     chatLLM = ChatTongyi(
         model="qwen-max",
