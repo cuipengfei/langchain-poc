@@ -1,10 +1,7 @@
 langchain
 langchain-community
-
-
 langchain-chroma
 chromadb
-
 dashscope
-
 python-dotenv
+tiktoken

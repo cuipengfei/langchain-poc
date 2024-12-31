@@ -2,12 +2,19 @@ import http
 import http.client
 import logging
 import os
+from operator import itemgetter
+from typing import List
 
+import tiktoken
 from dotenv import load_dotenv
+from langchain_chroma import Chroma
 from langchain_community.chat_models.tongyi import ChatTongyi
+from langchain_community.embeddings import DashScopeEmbeddings
 from langchain_core.chat_history import BaseChatMessageHistory, InMemoryChatMessageHistory
-from langchain_core.messages import HumanMessage
-from langchain_core.runnables import RunnableWithMessageHistory
+from langchain_core.messages import HumanMessage, BaseMessage, AIMessage, ToolMessage, SystemMessage, trim_messages
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.runnables import RunnablePassthrough
+from langchain_core.runnables.history import RunnableWithMessageHistory
 
 
 def setup_logging():
@@ -31,20 +38,34 @@ def setup_logging():
         handler.setLevel(logging.DEBUG)
 
 
-def get_multiline_input(prompt='请输入您的问题（或输入 "exit" 退出）：', end_marker='end'):
-    print(prompt)
-    lines = []
-    while True:
-        try:
-            line = input()
-            if line.strip().lower() == 'exit':
-                return 'exit'
-            if line.strip().lower() == end_marker.lower():
-                break
-            lines.append(line)
-        except EOFError:  # Ctrl+D (Unix) 或 Ctrl+Z (Windows)
-            break
-    return '\n'.join(lines).strip()  # 确保返回的内容不包含多余的空白字符
+def str_token_counter(text: str) -> int:
+    enc = tiktoken.get_encoding("o200k_base")
+    return len(enc.encode(text))
+
+
+def tiktoken_counter(messages: List[BaseMessage]) -> int:
+    num_tokens = 3
+    tokens_per_message = 3
+    tokens_per_name = 1
+    for msg in messages:
+        if isinstance(msg, HumanMessage):
+            role = "user"
+        elif isinstance(msg, AIMessage):
+            role = "assistant"
+        elif isinstance(msg, ToolMessage):
+            role = "tool"
+        elif isinstance(msg, SystemMessage):
+            role = "system"
+        else:
+            raise ValueError(f"Unsupported messages type {msg.__class__}")
+        num_tokens += (
+                tokens_per_message
+                + str_token_counter(role)
+                + str_token_counter(msg.content)
+        )
+        if msg.name:
+            num_tokens += tokens_per_name + str_token_counter(msg.name)
+    return num_tokens
 
 
 if __name__ == "__main__":
@@ -54,8 +75,7 @@ if __name__ == "__main__":
     load_dotenv()
 
     # 使用os.getenv获取API key，并提供错误处理
-    api_key = os.getenv("DASHSCOPE_API_KEY")
-    if not api_key:
+    if not os.getenv("DASHSCOPE_API_KEY"):
         raise ValueError("请在.env文件中设置 DASHSCOPE_API_KEY")
 
     # 创建聊天模型
@@ -74,25 +94,69 @@ if __name__ == "__main__":
         return store[session_id]
 
 
-    # 将聊天模型与历史记录包装在一起
-    with_message_history = RunnableWithMessageHistory(chatLLM, get_session_history)
+    # 创建向量存储和检索器
+    vectorstore = Chroma(
+        collection_name="ai_learning",
+        embedding_function=DashScopeEmbeddings(model="text-embedding-v3"),
+        persist_directory="vectordb"
+    )
+    retriever = vectorstore.as_retriever(search_type="similarity")
+
+    # 创建消息修剪器
+    trimmer = trim_messages(
+        max_tokens=4096,
+        strategy="last",
+        token_counter=tiktoken_counter,
+        include_system=True,
+    )
+
+    # 创建聊天模型链
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            (
+                "system",
+                """You are an assistant for question-answering tasks. 
+                Always respond in Chinese, no matter the language of the input.
+                Use the following pieces of retrieved context to answer the question. 
+                If you don't know the answer, just say that you don't know. 
+                Use three sentences maximum and keep the answer concise.
+                Context: {context}""",
+            ),
+            MessagesPlaceholder(variable_name="history"),
+            ("human", "{question}"),
+        ]
+    )
+
+
+    def format_docs(docs):
+        return "\n\n".join(doc.page_content for doc in docs)
+
+
+    context = itemgetter("question") | retriever | format_docs
+    first_step = RunnablePassthrough.assign(context=context)
+    chain = first_step | prompt | trimmer | chatLLM
+
+    with_message_history = RunnableWithMessageHistory(
+        chain,
+        get_session_history=get_session_history,
+        input_messages_key="question",
+        history_messages_key="history",
+    )
 
     # 配置会话ID
     config = {"configurable": {"session_id": "default_session"}}
 
+    # 运行聊天模型链
     while True:
+        user_input = input("You:> ")
+        if user_input.lower() == 'exit':
+            break
+        if user_input.strip() == "":
+            continue
         try:
-            user_input = get_multiline_input()
-            if user_input.lower() == 'exit':
-                print("程序已退出。")
-                break
-
-            # 使用带历史记录的方式调用模型
-            res = with_message_history.invoke(
-                [HumanMessage(content=user_input)],
-                config=config
-            )
-            print("Qwen的回答：", res.content)
-
-        except Exception as e:
-            print(f"发生错误: {e}")
+            stream = with_message_history.stream({"question": user_input}, config=config)
+            for chunk in stream:
+                print(chunk.content, end='', flush=True)
+            print()
+        except ValueError as e:
+            print(f"Error: {e}")
