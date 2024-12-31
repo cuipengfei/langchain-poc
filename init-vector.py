@@ -13,7 +13,7 @@ text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=20
 splits = text_splitter.split_documents(docs)
 vectorstore = Chroma(
     collection_name="ai_learning",
-    embedding_function=DashScopeEmbeddings(),
+    embedding_function=DashScopeEmbeddings(model="text-embedding-v3"),
     persist_directory="vectordb"
 )
 vectorstore.add_documents(splits)
