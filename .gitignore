@@ -1,3 +1,5 @@
 .idea
 /ai-poc.iml
 .env
+/venv/
+/vectordb/
