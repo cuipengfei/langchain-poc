@@ -5,11 +5,13 @@ import tiktoken
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMessage, SystemMessage
 
 
+# 计算字符串的token数量
 def str_token_counter(text: str) -> int:
     enc = tiktoken.get_encoding("o200k_base")
     return len(enc.encode(text))
 
 
+# 计算消息列表的token数量
 def tiktoken_counter(messages: List[BaseMessage]) -> int:
     num_tokens: int = 3
     tokens_per_message: int = 3

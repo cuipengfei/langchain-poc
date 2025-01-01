@@ -1,6 +1,6 @@
 # poc.py
 from operator import itemgetter
-from typing import Dict, List
+from typing import List
 
 from langchain_core.documents import Document
 from langchain_core.messages import trim_messages
@@ -15,20 +15,22 @@ from token_counter import tiktoken_counter
 from vector_store_setup import create_vector_store
 
 
+# 格式化文档内容为字符串
 def format_docs(docs: List[Document]) -> str:
     return "\n\n".join(doc.page_content for doc in docs)
 
 
 if __name__ == "__main__":
-    setup_logging()
-    load_environment()
-    api_key = check_api_key()
+    setup_logging()  # 设置日志记录
+    load_environment()  # 加载环境变量
+    api_key = check_api_key()  # 检查API密钥
 
-    chatLLM = create_chat_model()
+    chatLLM = create_chat_model()  # 创建聊天模型实例
 
-    vectorstore = create_vector_store()
-    retriever = vectorstore.as_retriever(search_type="similarity")
+    vectorstore = create_vector_store()  # 创建向量存储实例
+    retriever = vectorstore.as_retriever(search_type="similarity")  # 创建检索器
 
+    # 修剪消息以确保总token数不超过4096
     trimmer = trim_messages(
         max_tokens=4096,
         strategy="last",
@@ -36,6 +38,7 @@ if __name__ == "__main__":
         include_system=True,
     )
 
+    # 创建聊天提示模板
     prompt = ChatPromptTemplate.from_messages(
         [
             (
@@ -52,19 +55,20 @@ if __name__ == "__main__":
         ]
     )
 
+    # 定义上下文处理流程
     context = RunnablePassthrough.assign(context=itemgetter("question") | retriever | format_docs)
     first_step = RunnablePassthrough.assign(context=context)
     chain = first_step | prompt | trimmer | chatLLM
 
+    # 创建带有消息历史记录的可运行对象
     with_message_history = RunnableWithMessageHistory(
         chain,
-        get_session_history=lambda session_id: get_session_history({}, session_id),
+        get_session_history=get_session_history,
         input_messages_key="question",
         history_messages_key="history",
     )
 
-    config: Dict[str, Dict[str, str]] = {"configurable": {"session_id": "default_session"}}
-
+    # 主循环，处理用户输入
     while True:
         user_input: str = input("You:> ")
         if user_input.lower() == 'exit':
@@ -72,7 +76,10 @@ if __name__ == "__main__":
         if user_input.strip() == "":
             continue
         try:
-            stream = with_message_history.stream({"question": user_input}, config=config)
+            stream = with_message_history.stream(
+                input={"question": user_input},
+                config={"configurable": {"session_id": "default_session"}}
+            )
             for chunk in stream:
                 print(chunk.content, end='', flush=True)
             print()

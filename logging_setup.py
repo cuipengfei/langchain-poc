@@ -3,6 +3,7 @@ import http.client
 import logging
 
 
+# 设置日志记录
 def setup_logging() -> None:
     logging.basicConfig(
         format="%(levelname)s [%(asctime)s] %(name)s - %(filename)s:%(lineno)d - %(message)s",
@@ -11,6 +12,7 @@ def setup_logging() -> None:
     )
     httpclient_logger: logging.Logger = logging.getLogger("http.client")
 
+    # 自定义HTTP客户端日志记录
     def httpclient_log(*args: str) -> None:
         httpclient_logger.log(logging.DEBUG, " ".join(args))
 

@@ -4,6 +4,7 @@ from langchain_community.embeddings import DashScopeEmbeddings
 from langchain_core.vectorstores import VectorStore
 
 
+# 创建向量存储实例
 def create_vector_store() -> VectorStore:
     return Chroma(
         collection_name="ai_learning",
