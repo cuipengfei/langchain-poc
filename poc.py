@@ -1,108 +1,34 @@
-import http
-import http.client
-import logging
-import os
+# poc.py
 from operator import itemgetter
-from typing import List
+from typing import Dict, List
 
-import tiktoken
-from dotenv import load_dotenv
-from langchain_chroma import Chroma
-from langchain_community.chat_models.tongyi import ChatTongyi
-from langchain_community.embeddings import DashScopeEmbeddings
-from langchain_core.chat_history import BaseChatMessageHistory, InMemoryChatMessageHistory
-from langchain_core.messages import HumanMessage, BaseMessage, AIMessage, ToolMessage, SystemMessage, trim_messages
+from langchain_core.documents import Document
+from langchain_core.messages import trim_messages
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.runnables.history import RunnableWithMessageHistory
 
-
-def setup_logging():
-    logging.basicConfig(
-        format="%(levelname)s [%(asctime)s] %(name)s - %(filename)s:%(lineno)d - %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-        level=logging.INFO
-    )
-    httpclient_logger = logging.getLogger("http.client")
-
-    def httpclient_log(*args):
-        httpclient_logger.log(logging.DEBUG, " ".join(args))
-
-    http.client.print = httpclient_log
-    http.client.HTTPConnection.debuglevel = 1
-
-    urllib3_logger = logging.getLogger("urllib3")
-    urllib3_logger.setLevel(logging.DEBUG)
-
-    for handler in urllib3_logger.handlers:
-        handler.setLevel(logging.DEBUG)
+from chat_model_setup import create_chat_model, get_session_history
+from environment_loader import load_environment, check_api_key
+from logging_setup import setup_logging
+from token_counter import tiktoken_counter
+from vector_store_setup import create_vector_store
 
 
-def str_token_counter(text: str) -> int:
-    enc = tiktoken.get_encoding("o200k_base")
-    return len(enc.encode(text))
-
-
-def tiktoken_counter(messages: List[BaseMessage]) -> int:
-    num_tokens = 3
-    tokens_per_message = 3
-    tokens_per_name = 1
-    for msg in messages:
-        if isinstance(msg, HumanMessage):
-            role = "user"
-        elif isinstance(msg, AIMessage):
-            role = "assistant"
-        elif isinstance(msg, ToolMessage):
-            role = "tool"
-        elif isinstance(msg, SystemMessage):
-            role = "system"
-        else:
-            raise ValueError(f"Unsupported messages type {msg.__class__}")
-        num_tokens += (
-                tokens_per_message
-                + str_token_counter(role)
-                + str_token_counter(msg.content)
-        )
-        if msg.name:
-            num_tokens += tokens_per_name + str_token_counter(msg.name)
-    return num_tokens
+def format_docs(docs: List[Document]) -> str:
+    return "\n\n".join(doc.page_content for doc in docs)
 
 
 if __name__ == "__main__":
     setup_logging()
+    load_environment()
+    api_key = check_api_key()
 
-    # 从.env文件加载API key
-    load_dotenv()
+    chatLLM = create_chat_model()
 
-    # 使用os.getenv获取API key，并提供错误处理
-    if not os.getenv("DASHSCOPE_API_KEY"):
-        raise ValueError("请在.env文件中设置 DASHSCOPE_API_KEY")
-
-    # 创建聊天模型
-    chatLLM = ChatTongyi(
-        model="qwen-max",
-        streaming=False,
-    )
-
-    # 添加聊天历史存储
-    store = {}
-
-
-    def get_session_history(session_id: str) -> BaseChatMessageHistory:
-        if session_id not in store:
-            store[session_id] = InMemoryChatMessageHistory()
-        return store[session_id]
-
-
-    # 创建向量存储和检索器
-    vectorstore = Chroma(
-        collection_name="ai_learning",
-        embedding_function=DashScopeEmbeddings(model="text-embedding-v3"),
-        persist_directory="vectordb"
-    )
+    vectorstore = create_vector_store()
     retriever = vectorstore.as_retriever(search_type="similarity")
 
-    # 创建消息修剪器
     trimmer = trim_messages(
         max_tokens=4096,
         strategy="last",
@@ -110,15 +36,14 @@ if __name__ == "__main__":
         include_system=True,
     )
 
-    # 创建聊天模型链
     prompt = ChatPromptTemplate.from_messages(
         [
             (
                 "system",
-                """You are an assistant for question-answering tasks. 
+                """You are an assistant for question-answering tasks.
                 Always respond in Chinese, no matter the language of the input.
-                Use the following pieces of retrieved context to answer the question. 
-                If you don't know the answer, just say that you don't know. 
+                Use the following pieces of retrieved context to answer the question.
+                If you don't know the answer, just say that you don't know.
                 Use three sentences maximum and keep the answer concise.
                 Context: {context}""",
             ),
@@ -127,28 +52,21 @@ if __name__ == "__main__":
         ]
     )
 
-
-    def format_docs(docs):
-        return "\n\n".join(doc.page_content for doc in docs)
-
-
-    context = itemgetter("question") | retriever | format_docs
+    context = RunnablePassthrough.assign(context=itemgetter("question") | retriever | format_docs)
     first_step = RunnablePassthrough.assign(context=context)
     chain = first_step | prompt | trimmer | chatLLM
 
     with_message_history = RunnableWithMessageHistory(
         chain,
-        get_session_history=get_session_history,
+        get_session_history=lambda session_id: get_session_history({}, session_id),
         input_messages_key="question",
         history_messages_key="history",
     )
 
-    # 配置会话ID
-    config = {"configurable": {"session_id": "default_session"}}
+    config: Dict[str, Dict[str, str]] = {"configurable": {"session_id": "default_session"}}
 
-    # 运行聊天模型链
     while True:
-        user_input = input("You:> ")
+        user_input: str = input("You:> ")
         if user_input.lower() == 'exit':
             break
         if user_input.strip() == "":
