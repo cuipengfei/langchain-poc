@@ -1,22 +1,37 @@
+from typing import List
+
 from dotenv import load_dotenv
 from langchain_chroma import Chroma
 from langchain_community.document_loaders import TextLoader
 from langchain_community.embeddings import DashScopeEmbeddings
+from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-load_dotenv()
 
-loader = TextLoader("introduction.txt", encoding="utf-8")
-docs = loader.load()
+def load_environment() -> None:
+    load_dotenv()
 
-text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-splits = text_splitter.split_documents(docs)
-vectorstore = Chroma(
-    collection_name="ai_learning",
-    embedding_function=DashScopeEmbeddings(model="text-embedding-v3"),
-    persist_directory="vectordb"
-)
-vectorstore.add_documents(splits)
 
-documents = vectorstore.similarity_search("豚母升木的研究内容有哪些？其引用的都资料有哪些？")
-print(documents)
+def load_and_split_documents(file_path: str) -> List[Document]:
+    loader: TextLoader = TextLoader(file_path, encoding="utf-8")
+    docs: List[Document] = loader.load()
+    text_splitter: RecursiveCharacterTextSplitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+    return text_splitter.split_documents(docs)
+
+
+def create_vector_store(splits: List[Document]) -> Chroma:
+    vectorstore: Chroma = Chroma(
+        collection_name="ai_learning",
+        embedding_function=DashScopeEmbeddings(model="text-embedding-v3"),
+        persist_directory="vectordb"
+    )
+    vectorstore.add_documents(splits)
+    return vectorstore
+
+
+if __name__ == "__main__":
+    load_environment()
+    splits: List[Document] = load_and_split_documents("introduction.txt")
+    vectorstore: Chroma = create_vector_store(splits)
+    documents: List[Document] = vectorstore.similarity_search("豚母升木的研究内容有哪些？其引用的资料有哪些？")
+    print(documents)
