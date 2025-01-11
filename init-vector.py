@@ -13,7 +13,7 @@ from vector_store_setup import create_vector_store
 def load_and_split_documents(file_path: str) -> List[Document]:
     loader: TextLoader = TextLoader(file_path, encoding="utf-8")
     docs: List[Document] = loader.load()
-    text_splitter: RecursiveCharacterTextSplitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+    text_splitter: RecursiveCharacterTextSplitter = RecursiveCharacterTextSplitter(chunk_size=256, chunk_overlap=64)
     return text_splitter.split_documents(docs)
 
 

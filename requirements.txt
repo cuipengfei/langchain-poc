@@ -5,3 +5,4 @@ chromadb
 dashscope
 python-dotenv
 tiktoken
+langchain-postgres
